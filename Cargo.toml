@@ -3,10 +3,19 @@ name = "pumpfun_indexer"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "indexer"
+path = "src/main.rs"
+
+[[bin]]
+name = "backfill"
+path = "src/bin/backfill.rs"
+
 [dependencies]
 anchor-lang = "0.32.1"
 anyhow = "1.0.100"
 axum = { version = "0.8.6", features = ["ws"] }
+bigdecimal = { version = "0.4.9", features = ["serde"] }
 borsh = "1.5.7"
 bs58 = "0.5.1"
 chrono = "0.4.42"
