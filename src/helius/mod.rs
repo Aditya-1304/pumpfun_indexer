@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod extractor;
 
 use tokio::sync::Semaphore;
 use std::sync::Arc;
@@ -16,7 +17,6 @@ use std::time::Duration;
 
 const PUMP_PROGRAM_ID: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 
-/// Raw transaction data from WebSocket
 #[derive(Debug)]
 pub struct RawTransaction {
     pub signature: String,
@@ -24,7 +24,7 @@ pub struct RawTransaction {
     pub transaction: EncodedTransactionWithStatusMeta,
 }
 
-/// WebSocket RPC request
+
 #[derive(Debug, Serialize)]
 struct RpcRequest {
     jsonrpc: String,
@@ -33,7 +33,7 @@ struct RpcRequest {
     params: serde_json::Value,
 }
 
-/// WebSocket RPC response
+
 #[derive(Debug, Deserialize)]
 struct RpcResponse {
     jsonrpc: String,
@@ -49,7 +49,7 @@ struct RpcResponse {
     error: Option<serde_json::Value>,
 }
 
-/// Logs notification
+
 #[derive(Debug, Deserialize)]
 struct LogsNotification {
     subscription: u64,
@@ -95,7 +95,6 @@ pub async fn start_listener(
 
     let (mut write, mut read) = ws_stream.split();
 
-    // Subscribe to program logs
     let subscribe_request = RpcRequest {
         jsonrpc: "2.0".to_string(),
         id: 1,
@@ -167,7 +166,7 @@ pub async fn start_listener(
                                         tx_count += 1;
                                         
                                         if tx_count == 1 {
-                                            info!("🎉 First pump.fun event detected!");
+                                            info!(" First pump.fun event detected!");
                                         }
                                         
                                         if tx_count % 10 == 0 {

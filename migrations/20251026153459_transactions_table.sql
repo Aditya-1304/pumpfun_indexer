@@ -1,4 +1,6 @@
--- Add migration script here
+-- Drop existing tables and recreate with all columns
+DROP TABLE IF EXISTS indexer_stats CASCADE;
+DROP TABLE IF EXISTS transactions CASCADE;
 DROP TABLE IF EXISTS token_holders CASCADE;
 DROP TABLE IF EXISTS trades CASCADE;
 DROP TABLE IF EXISTS tokens CASCADE;
@@ -12,7 +14,6 @@ CREATE TABLE tokens (
     bonding_curve_address VARCHAR(44) NOT NULL,
     creator_wallet VARCHAR(44) NOT NULL,
     
-    -- Bonding curve state from CreateEvent
     virtual_token_reserves BIGINT DEFAULT 0,
     virtual_sol_reserves BIGINT DEFAULT 0,
     real_token_reserves BIGINT DEFAULT 0,
@@ -72,14 +73,60 @@ CREATE TABLE token_holders (
     UNIQUE(token_mint, user_wallet)
 );
 
--- Indexes
+-- All pump.fun program interactions (🔥 WITH ALL COLUMNS)
+CREATE TABLE transactions (
+    signature VARCHAR(88) PRIMARY KEY,
+    slot BIGINT NOT NULL,
+    block_time TIMESTAMPTZ NOT NULL,
+    fee BIGINT NOT NULL,
+    success BOOLEAN NOT NULL,
+    signer VARCHAR(44) NOT NULL,
+    instruction_count INTEGER NOT NULL,
+    log_messages_count INTEGER NOT NULL,
+    has_program_data BOOLEAN DEFAULT false,
+    accounts_involved TEXT[],               -- 🔥 NEW
+    pre_balances BIGINT[],                  -- 🔥 NEW
+    post_balances BIGINT[],                 -- 🔥 NEW
+    compute_units_consumed BIGINT,          -- 🔥 NEW
+    error_message TEXT,                      -- 🔥 NEW
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Statistics table
+CREATE TABLE indexer_stats (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    total_transactions BIGINT DEFAULT 0,
+    total_tokens_created BIGINT DEFAULT 0,
+    total_trades BIGINT DEFAULT 0,
+    total_volume_sol NUMERIC(20, 9) DEFAULT 0,
+    last_processed_slot BIGINT DEFAULT 0,
+    last_updated TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT single_row CHECK (id = 1)
+);
+
+-- Indexes for tokens
 CREATE INDEX idx_tokens_creator ON tokens(creator_wallet);
 CREATE INDEX idx_tokens_created_at ON tokens(created_at DESC);
 CREATE INDEX idx_tokens_market_cap ON tokens(market_cap_usd DESC);
 CREATE INDEX idx_tokens_complete ON tokens(complete);
+
+-- Indexes for trades
 CREATE INDEX idx_trades_token_timestamp ON trades(token_mint, timestamp DESC);
 CREATE INDEX idx_trades_user ON trades(user_wallet);
 CREATE INDEX idx_trades_ix_name ON trades(ix_name); 
 CREATE INDEX idx_trades_creator ON trades(creator);
+
+-- Indexes for token holders
 CREATE INDEX idx_holders_token ON token_holders(token_mint);
 CREATE INDEX idx_holders_balance ON token_holders(balance DESC);
+
+-- Indexes for transactions
+CREATE INDEX idx_transactions_block_time ON transactions(block_time DESC);
+CREATE INDEX idx_transactions_signer ON transactions(signer);
+CREATE INDEX idx_transactions_slot ON transactions(slot DESC);
+CREATE INDEX idx_transactions_success ON transactions(success);
+CREATE INDEX idx_transactions_has_program_data ON transactions(has_program_data);
+
+-- Insert initial stats row
+INSERT INTO indexer_stats (id) VALUES (1)
+ON CONFLICT (id) DO NOTHING;

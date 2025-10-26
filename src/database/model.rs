@@ -68,6 +68,36 @@ pub struct TokenHolder {
   pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneralTransaction {
+  pub signature: String,
+  pub slot: u64,
+  pub block_time: DateTime<Utc>,
+  pub fee: u64,
+  pub success: bool,
+  pub signer: String,
+  pub instruction_count: i32,
+  pub log_messages_count: i32,
+  pub has_program_data: bool,
+  pub accounts_involved: Vec<String>,
+  pub pre_balances: Vec<i64>,
+  pub post_balances: Vec<i64>,
+  pub compute_units_consumed: Option<i64>,
+  pub error_message: Option<String>,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct IndexerStats {
+  pub id: i32,
+  pub total_transactions: i64,
+  pub total_tokens_created: i64,
+  pub total_trades: i64,
+  pub total_volume_sol: BigDecimal,
+  pub last_processed_slot: i64,
+  pub last_updated: DateTime<Utc>,
+}
+
 /// CreateEvent
 #[derive(Debug, Clone)]
 pub struct CreateEvent {
