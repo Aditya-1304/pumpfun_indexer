@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use anyhow::Result;
 use tracing::{info, error, debug, warn};
 use serde::{Serialize, Deserialize};
-use chrono::TimeZone;
+use chrono::{TimeZone, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeMessage {
@@ -35,6 +35,57 @@ async fn safe_publish<T: serde::Serialize>(
     } else {
         debug!("✅ Published to Redis channel: {}", channel);
     }
+}
+
+async fn ensure_token_exists(pool: &PgPool, mint: &str) -> Result<()> {
+    let exists: Option<(String,)> = sqlx::query_as(
+        "SELECT mint_address FROM tokens WHERE mint_address = $1"
+    )
+    .bind(mint)
+    .fetch_optional(pool)
+    .await?;
+    
+    if exists.is_some() {
+        return Ok(());
+    }
+    
+    warn!("⚠️  Token {} not found in DB, creating placeholder", mint);
+    
+    sqlx::query(
+        "INSERT INTO tokens (
+            mint_address, 
+            name, 
+            symbol, 
+            uri, 
+            creator_wallet,
+            bonding_curve_address,
+            virtual_sol_reserves,
+            virtual_token_reserves,
+            real_token_reserves,
+            token_total_supply,
+            complete,
+            created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (mint_address) DO NOTHING"
+    )
+    .bind(mint)
+    .bind(format!("Unknown Token {}", &mint[..8])) // Placeholder name
+    .bind("UNKNOWN") // Placeholder symbol
+    .bind("") // Empty URI
+    .bind("11111111111111111111111111111111") // System program as placeholder
+    .bind("11111111111111111111111111111111") // Placeholder bonding curve ADDRESS
+    .bind(0i64) // Default reserves
+    .bind(0i64)
+    .bind(0i64)
+    .bind(0i64)
+    .bind(false)
+    .bind(Utc::now())
+    .execute(pool)
+    .await?;
+    
+    info!("✅ Created placeholder token entry for {}", mint);
+    
+    Ok(())
 }
 
 pub async fn process_event(
@@ -71,7 +122,6 @@ pub async fn process_event(
                 sol_price_usd,
             ).await;
 
-
             let creation_msg = serde_json::json!({
                 "mint": create.mint,
                 "name": create.name,
@@ -96,6 +146,10 @@ pub async fn process_event(
                 action, token_amt, sol_amt, trade.mint
             );
 
+            if let Err(e) = ensure_token_exists(pool, &trade.mint).await {
+                error!("Failed to ensure token exists: {}", e);
+                return Err(e);
+            }
 
             if let Err(e) = database::save_trade(pool, &trade).await {
                 error!("Failed to save trade: {}", e);
@@ -112,7 +166,6 @@ pub async fn process_event(
                 sol_price_usd,
             ).await;
 
-
             if let Some(state) = &updated_state {
                 if let Err(e) = database::update_token_metrics(
                     pool,
@@ -123,7 +176,6 @@ pub async fn process_event(
                     error!("Failed to update token metrics: {}", e);
                 }
             }
-
 
             if let Some(state) = updated_state {
                 let trade_msg = TradeMessage {
@@ -137,7 +189,6 @@ pub async fn process_event(
                     market_cap_usd: state.market_cap_usd,
                     price_sol: state.current_price_sol,
                 };
-
 
                 safe_publish(redis, "pump:trades", &trade_msg).await;
 

@@ -10,10 +10,10 @@ use crate::api::AppState;
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct CreatorTokenResponse {
-    pub mint: String,
+    pub mint_address: String,       
     pub name: String,
     pub symbol: String,
-    pub market_cap_sol: f64,
+    pub market_cap_usd: Option<bigdecimal::BigDecimal>,
     pub complete: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -22,10 +22,11 @@ pub async fn get_creator_tokens(
     State(state): State<AppState>,
     Path(wallet): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+
     let tokens = sqlx::query_as::<_, CreatorTokenResponse>(
-        "SELECT mint, name, symbol, market_cap_sol, complete, created_at
+        "SELECT mint_address, name, symbol, market_cap_usd, complete, created_at
          FROM tokens
-         WHERE creator = $1
+         WHERE creator_wallet = $1
          ORDER BY created_at DESC"
     )
     .bind(&wallet)

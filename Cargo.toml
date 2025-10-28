@@ -11,10 +11,15 @@ path = "src/main.rs"
 name = "backfill"
 path = "src/bin/backfill.rs"
 
+[[bin]]
+name = "check_db"
+path = "src/bin/check_db.rs"
+
 [dependencies]
 anchor-lang = "0.32.1"
 anyhow = "1.0.100"
 axum = { version = "0.8.6", features = ["ws"] }
+base64 = "0.22.1"
 bigdecimal = { version = "0.4.9", features = ["serde"] }
 borsh = "1.5.7"
 bs58 = "0.5.1"

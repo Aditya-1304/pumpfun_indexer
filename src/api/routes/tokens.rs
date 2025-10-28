@@ -15,20 +15,20 @@ pub struct ListTokensQuery {
     #[serde(default)]
     offset: i64,
     #[serde(default)]
-    sort: String, // "created" or "market_cap"
+    sort: String,
 }
 
 fn default_limit() -> i64 { 50 }
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct TokenResponse {
-    pub mint: String,
+    pub mint_address: String,          
     pub name: String,
     pub symbol: String,
     pub uri: String,
-    pub creator: String,
-    pub market_cap_sol: f64,
-    pub bonding_curve_progress: f64,
+    pub creator_wallet: String,        
+    pub market_cap_usd: Option<bigdecimal::BigDecimal>,
+    pub bonding_curve_progress: Option<bigdecimal::BigDecimal>,
     pub complete: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -41,13 +41,14 @@ pub async fn list_tokens(
     let offset = query.offset;
     
     let order_by = match query.sort.as_str() {
-        "market_cap" => "market_cap_sol DESC",
+        "market_cap" => "market_cap_usd DESC NULLS LAST",
         _ => "created_at DESC",
     };
     
+    
     let sql = format!(
-        "SELECT mint, name, symbol, uri, creator, 
-                market_cap_sol, bonding_curve_progress, complete, created_at
+        "SELECT mint_address, name, symbol, uri, creator_wallet, 
+                market_cap_usd, bonding_curve_progress, complete, created_at
          FROM tokens
          ORDER BY {}
          LIMIT $1 OFFSET $2",
@@ -82,16 +83,15 @@ pub async fn list_tokens(
     })))
 }
 
-
 pub async fn get_token(
     State(state): State<AppState>,
     Path(mint): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-
+    
     let state_map = state.token_state.read().await;
     if let Some(token_state) = state_map.get(&mint) {
         return Ok(Json(json!({
-            "mint": token_state.mint,
+            "mint_address": token_state.mint,
             "name": token_state.name,
             "symbol": token_state.symbol,
             "creator": token_state.creator,
@@ -106,12 +106,12 @@ pub async fn get_token(
     }
     drop(state_map);
     
-
+    
     let token = sqlx::query_as::<_, TokenResponse>(
-        "SELECT mint, name, symbol, uri, creator, 
-                market_cap_sol, bonding_curve_progress, complete, created_at
+        "SELECT mint_address, name, symbol, uri, creator_wallet, 
+                market_cap_usd, bonding_curve_progress, complete, created_at
          FROM tokens
-         WHERE mint = $1"
+         WHERE mint_address = $1"
     )
     .bind(&mint)
     .fetch_optional(&state.db)
@@ -123,11 +123,11 @@ pub async fn get_token(
     
     match token {
         Some(t) => Ok(Json(json!({
-            "mint": t.mint,
+            "mint_address": t.mint_address,
             "name": t.name,
             "symbol": t.symbol,
-            "creator": t.creator,
-            "market_cap_sol": t.market_cap_sol,
+            "creator": t.creator_wallet,
+            "market_cap_usd": t.market_cap_usd,
             "bonding_curve_progress": t.bonding_curve_progress,
             "complete": t.complete,
             "created_at": t.created_at,

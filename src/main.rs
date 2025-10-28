@@ -4,140 +4,129 @@ mod helius;
 mod processor;
 mod storage;
 mod api;
+mod background;
 
 use anyhow::Result;
-use tokio::sync::mpsc;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{info, error};
 use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
+
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_file(false)
         .init();
 
-    tracing::info!("  Starting Pump.fun Indexer...");
+    info!("🚀 Starting Pump.fun Indexer...");
 
     let config = config::Config::from_env()?;
-    tracing::info!("   Configuration loaded");
-    tracing::info!("   Database: {}", mask_db_url(&config.database_url));
-    tracing::info!("   Redis: {}", config.redis_url);
-    tracing::info!("   API Port: {}", config.api_port);
-
+    info!("✅ Configuration loaded");
+    info!("   Database: {}", mask_db_url(&config.database_url));
+    info!("   Redis: {}", config.redis_url);
+    info!("   API Port: {}", config.api_port);
     
-    let db_pool = database::create_pool(&config.database_url).await?;
-    database::test_connection(&db_pool).await?;
+    if config.coingecko_api_key.is_some() {
+        info!("   CoinGecko: Pro API enabled");
+    } else {
+        info!("   CoinGecko: Free tier (may have rate limits)");
+    }
 
+    let pool = database::create_pool(&config.database_url).await?;
+
+
+    let redis_client = storage::create_redis_client(&config.redis_url).await?;
+
+    let sol_price = Arc::new(RwLock::new(150.0));
+
+    let token_state_map = processor::state::create_state_map();
+    info!("✅ In-memory state initialized");
+
+
+    tokio::spawn(background::start_sol_price_updater(
+        sol_price.clone(),
+        config.coingecko_api_key.clone(),
+    ));
     
-    let mut redis_client = storage::create_redis_client(&config.redis_url).await?;
+    tokio::spawn(background::start_state_backup(pool.clone(), token_state_map.clone()));
 
+    let api_state = api::AppState {
+        db: pool.clone(),
+        redis: redis_client.clone(),
+        token_state: token_state_map.clone(),
+        sol_price: sol_price.clone(),
+    };
     
-    let token_state = processor::state::create_state_map();
-    tracing::info!("  In-memory state initialized");
-
+    let router = api::create_router(api_state);
+    let addr = format!("0.0.0.0:{}", config.api_port);
     
-    let sol_price_usd = Arc::new(tokio::sync::RwLock::new(100.0));
+    info!("🌐 Starting API server on {}", addr);
+    
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let api_server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
 
-    tracing::info!("  Indexer is running!");
-    tracing::info!("Press Ctrl+C to shutdown");
+    info!("✨ Indexer is running!");
+    info!("   API: http://localhost:{}", config.api_port);
+    info!("   WebSocket: ws://localhost:{}/ws/trades", config.api_port);
+    info!("Press Ctrl+C to shutdown");
 
     let (tx_sender, mut tx_receiver) = mpsc::unbounded_channel();
-
-    let api_key = config.helius_api_key.clone();
-    tokio::spawn(async move {
-        if let Err(e) = helius::start_listener(api_key, tx_sender).await {
-            tracing::error!("Helius listener error: {}", e);
+    
+    let helius_key = config.helius_api_key.clone();
+    let helius_task = tokio::spawn(async move {
+        if let Err(e) = helius::start_listener(helius_key, tx_sender).await {
+            error!("Helius listener error: {}", e);
         }
     });
 
-    let process_pool = db_pool.clone();
-    let process_state = token_state.clone();
-    let sol_price_arc = sol_price_usd.clone();
+    let pool_clone = pool.clone();
+    let mut redis_clone = redis_client.clone();
+    let state_clone = token_state_map.clone();
+    let sol_price_clone = sol_price.clone();
     
     tokio::spawn(async move {
         while let Some(raw_tx) = tx_receiver.recv().await {
-            let block_time = None;
-
-            match helius::extractor::extract_transaction_metadata(
-                &raw_tx.signature,
-                raw_tx.slot,
-                &raw_tx.transaction,
-                block_time,
-            ) {
-                Ok(general_tx) => {
-                    if let Err(e) = database::save_general_transaction(&process_pool, &general_tx).await {
-                        tracing::error!("Failed to save transaction metadata: {}", e);
-                    } else {
-
-                        if let Err(e) = database::update_stats(
-                            &process_pool,
-                            raw_tx.slot,
-                            0, 0, 0.0,
+            let signature = raw_tx.signature.clone();
+            
+            let general_tx = raw_tx.to_general_transaction();
+            
+            if let Err(e) = database::save_general_transaction(&pool_clone, &general_tx).await {
+                error!("Failed to save transaction {}: {}", signature, e);
+                continue;
+            }
+            
+            match helius::parser::parse_transaction(&signature, &raw_tx.transaction) {
+                Ok(events) => {
+                    let sol_price_value = *sol_price_clone.read().await;
+                    for event in events {
+                        if let Err(e) = processor::process_event(
+                            &pool_clone,
+                            event,
+                            &mut redis_clone,
+                            &state_clone,
+                            sol_price_value,
                         ).await {
-                            tracing::error!("Failed to update stats: {}", e);
+                            error!("Failed to process event: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to extract transaction metadata: {}", e);
-                }
-            }
-
-            match helius::parser::parse_transaction(&raw_tx.signature, &raw_tx.transaction) {
-                Ok(events) => {
-                    if !events.is_empty() {
-                        let mut tokens_created = 0i64;
-                        let mut trades_made = 0i64;
-                        let mut volume_sol = 0.0f64;
-
-                        for event in events {
-                            match &event {
-                                helius::parser::PumpEvent::Create(_) => tokens_created += 1,
-                                helius::parser::PumpEvent::Trade(trade) => {
-                                    trades_made += 1;
-                                    volume_sol += trade.sol_amount as f64 / 1_000_000_000.0;
-                                }
-                                helius::parser::PumpEvent::Complete(_) => {}
-                            }
-
-                            let current_sol_price = *sol_price_arc.read().await;
-
-                            if let Err(e) = processor::process_event(
-                                &process_pool,
-                                event,
-                                &mut redis_client,
-                                &process_state,
-                                current_sol_price,
-                            ).await {
-                                tracing::error!("Failed to process event: {}", e);
-                            }
-                        }
-
-                        if let Err(e) = database::update_stats(
-                            &process_pool,
-                            raw_tx.slot,
-                            tokens_created,
-                            trades_made,
-                            volume_sol,
-                        ).await {
-                            tracing::error!("Failed to update stats: {}", e);
-                        }
-                    }
-                }
-                Err(_) => {
-      
+                    error!("Failed to parse transaction {}: {}", signature, e);
                 }
             }
         }
     });
 
     tokio::signal::ctrl_c().await?;
-    tracing::info!("   Shutting down gracefully...");
-    
+    info!("👋 Shutting down gracefully...");
+
+    helius_task.abort();
+    api_server.abort();
+
     Ok(())
 }
 

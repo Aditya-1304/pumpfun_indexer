@@ -6,7 +6,7 @@ use tracing::{info, error, warn};
 
 #[derive(Clone)]
 pub struct RedisClient {
-    connection: ConnectionManager,
+    pub connection: ConnectionManager,
 }
 
 impl RedisClient {

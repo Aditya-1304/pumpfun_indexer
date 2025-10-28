@@ -21,8 +21,8 @@ fn default_limit() -> i64 { 50 }
 #[derive(Debug, Serialize, FromRow)]
 pub struct TradeResponse {
     pub signature: String,
-    pub mint: String,
-    pub trader_wallet: String,
+    pub token_mint: String,           
+    pub user_wallet: String,          
     pub is_buy: bool,
     pub sol_amount: i64,
     pub token_amount: i64,
@@ -38,9 +38,9 @@ pub async fn get_token_trades(
     let offset = query.offset;
     
     let trades = sqlx::query_as::<_, TradeResponse>(
-        "SELECT signature, mint, trader_wallet, is_buy, sol_amount, token_amount, timestamp
+        "SELECT signature, token_mint, user_wallet, is_buy, sol_amount, token_amount, timestamp
          FROM trades
-         WHERE mint = $1
+         WHERE token_mint = $1
          ORDER BY timestamp DESC
          LIMIT $2 OFFSET $3"
     )
@@ -55,7 +55,7 @@ pub async fn get_token_trades(
     })?;
     
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM trades WHERE mint = $1"
+        "SELECT COUNT(*) FROM trades WHERE token_mint = $1"
     )
     .bind(&mint)
     .fetch_one(&state.db)

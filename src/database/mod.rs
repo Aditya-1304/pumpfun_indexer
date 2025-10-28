@@ -27,20 +27,18 @@ pub async fn test_connection(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-
-pub async fn save_token_creation(pool: &PgPool, event: &CreateEvent) -> Result<()> {
-    let created_at = Utc.timestamp_opt(event.timestamp, 0)
-        .single()
-        .unwrap_or_else(|| Utc::now());
-
+pub async fn save_token_creation(
+    pool: &PgPool,
+    event: &crate::database::model::CreateEvent,
+) -> Result<()> {
     sqlx::query!(
         r#"
         INSERT INTO tokens (
-            mint_address, 
-            name, 
-            symbol, 
-            uri, 
-            bonding_curve_address,
+            mint_address,
+            name,
+            symbol,
+            uri,
+            bonding_curve_address,  -- 🔥 CHANGED from bonding_curve
             creator_wallet,
             virtual_token_reserves,
             virtual_sol_reserves,
@@ -49,19 +47,29 @@ pub async fn save_token_creation(pool: &PgPool, event: &CreateEvent) -> Result<(
             created_at
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (mint_address) DO NOTHING
+        ON CONFLICT (mint_address) DO UPDATE SET
+            name = EXCLUDED.name,
+            symbol = EXCLUDED.symbol,
+            uri = EXCLUDED.uri,
+            bonding_curve_address = EXCLUDED.bonding_curve_address,
+            creator_wallet = EXCLUDED.creator_wallet,
+            virtual_token_reserves = EXCLUDED.virtual_token_reserves,
+            virtual_sol_reserves = EXCLUDED.virtual_sol_reserves,
+            real_token_reserves = EXCLUDED.real_token_reserves,
+            token_total_supply = EXCLUDED.token_total_supply,
+            updated_at = NOW()
         "#,
         event.mint,
         event.name,
         event.symbol,
         event.uri,
-        event.bonding_curve,
+        event.bonding_curve,  // This is the value
         event.creator,
         event.virtual_token_reserves as i64,
         event.virtual_sol_reserves as i64,
         event.real_token_reserves as i64,
         event.token_total_supply as i64,
-        created_at
+        chrono::Utc.timestamp_opt(event.timestamp, 0).unwrap(),
     )
     .execute(pool)
     .await?;
@@ -217,7 +225,6 @@ pub async fn save_general_transaction(pool: &PgPool, tx: &GeneralTransaction) ->
     Ok(())
 }
 
-/// Update indexer statistics
 pub async fn update_stats(
     pool: &PgPool,
     slot: u64,
@@ -253,7 +260,6 @@ pub async fn update_stats(
     Ok(())
 }
 
-/// Get current indexer statistics
 pub async fn get_stats(pool: &PgPool) -> Result<model::IndexerStats> {
     use bigdecimal::BigDecimal;
     

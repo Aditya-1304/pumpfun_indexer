@@ -3289,6 +3289,7 @@ dependencies = [
  "anchor-lang",
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "bigdecimal",
  "borsh 1.5.7",
  "bs58",

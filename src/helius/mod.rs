@@ -14,6 +14,8 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use std::str::FromStr;
 use std::time::Duration;
+use crate::database::model::GeneralTransaction;
+use chrono::{DateTime, Utc, TimeZone};
 
 const PUMP_PROGRAM_ID: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 
@@ -21,9 +23,91 @@ const PUMP_PROGRAM_ID: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 pub struct RawTransaction {
     pub signature: String,
     pub slot: u64,
+    pub block_time: Option<i64>, // 🔥 NEW: Store block_time separately
     pub transaction: EncodedTransactionWithStatusMeta,
 }
 
+impl RawTransaction {
+    pub fn to_general_transaction(&self) -> GeneralTransaction {
+        let meta = self.transaction.meta.as_ref();
+        
+        let success = meta
+            .map(|m| m.err.is_none())
+            .unwrap_or(false);
+        
+        let fee = meta
+            .map(|m| m.fee)
+            .unwrap_or(0);
+        
+        let compute_units = meta
+            .and_then(|m| match m.compute_units_consumed {
+                solana_transaction_status::option_serializer::OptionSerializer::Some(units) => Some(units as i64),
+                _ => None,
+            });
+        
+        let log_messages = meta
+            .and_then(|m| match &m.log_messages {
+                solana_transaction_status::option_serializer::OptionSerializer::Some(msgs) => Some(msgs.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        
+        let has_program_data = log_messages.iter()
+            .any(|log| log.contains("Program data:"));
+
+        let accounts_involved = match &self.transaction.transaction {
+            solana_transaction_status::EncodedTransaction::Json(ui_tx) => {
+                match &ui_tx.message {
+                    solana_transaction_status::UiMessage::Parsed(parsed_msg) => {
+                        parsed_msg.account_keys.iter()
+                            .map(|k| k.pubkey.clone())
+                            .collect()
+                    }
+                    solana_transaction_status::UiMessage::Raw(raw_msg) => {
+                        raw_msg.account_keys.iter()
+                            .map(|k| k.clone())
+                            .collect()
+                    }
+                }
+            }
+            _ => vec![],
+        };
+        
+        let signer = accounts_involved.first().cloned().unwrap_or_default();
+        
+        let (pre_balances, post_balances) = meta
+            .map(|m| {
+                let pre = m.pre_balances.iter().map(|b| *b as i64).collect();
+                let post = m.post_balances.iter().map(|b| *b as i64).collect();
+                (pre, post)
+            })
+            .unwrap_or_default();
+        let error_message = meta
+            .and_then(|m| m.err.as_ref())
+            .map(|e| format!("{:?}", e));
+        
+        let block_time = self.block_time
+            .map(|ts| Utc.timestamp_opt(ts, 0).unwrap())
+            .unwrap_or_else(|| Utc::now());
+        
+        GeneralTransaction {
+            signature: self.signature.clone(),
+            slot: self.slot,
+            block_time,
+            fee,
+            success,
+            signer,
+            instruction_count: 0,
+            log_messages_count: log_messages.len() as i32,
+            has_program_data,
+            accounts_involved,
+            pre_balances,
+            post_balances,
+            compute_units_consumed: compute_units,
+            error_message,
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 struct RpcRequest {
@@ -32,7 +116,6 @@ struct RpcRequest {
     method: String,
     params: serde_json::Value,
 }
-
 
 #[derive(Debug, Deserialize)]
 struct RpcResponse {
@@ -48,7 +131,6 @@ struct RpcResponse {
     #[serde(default)]
     error: Option<serde_json::Value>,
 }
-
 
 #[derive(Debug, Deserialize)]
 struct LogsNotification {
@@ -148,7 +230,6 @@ pub async fn start_listener(
                             if let Some(params) = response.params {
                                 match serde_json::from_value::<LogsNotification>(params) {
                                     Ok(notification) => {
-
                                         if notification.result.value.err.is_some() {
                                             continue;
                                         }
@@ -166,7 +247,7 @@ pub async fn start_listener(
                                         tx_count += 1;
                                         
                                         if tx_count == 1 {
-                                            info!(" First pump.fun event detected!");
+                                            info!("🎉 First pump.fun event detected!");
                                         }
                                         
                                         if tx_count % 10 == 0 {
@@ -192,7 +273,6 @@ pub async fn start_listener(
                                             for attempt in 1..=3 {
                                                 match Signature::from_str(&fetch_signature) {
                                                     Ok(sig) => {
-                                                        
                                                         let config = solana_client::rpc_config::RpcTransactionConfig {
                                                             encoding: Some(solana_transaction_status::UiTransactionEncoding::JsonParsed),
                                                             commitment: Some(CommitmentConfig::confirmed()),
@@ -201,9 +281,11 @@ pub async fn start_listener(
                                                         
                                                         match fetch_rpc.get_transaction_with_config(&sig, config) {
                                                             Ok(tx_response) => {
+                                                            
                                                                 let raw_tx = RawTransaction {
                                                                     signature: fetch_signature.clone(),
                                                                     slot: tx_response.slot,
+                                                                    block_time: tx_response.block_time,
                                                                     transaction: tx_response.transaction,
                                                                 };
 
@@ -235,7 +317,6 @@ pub async fn start_listener(
                                                     }
                                                 }
                                             }
-                                            
                                         });
                                     }
                                     Err(e) => {
