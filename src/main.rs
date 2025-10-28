@@ -3,6 +3,7 @@ mod database;
 mod helius;
 mod processor;
 mod storage;
+mod api;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
