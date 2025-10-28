@@ -24,6 +24,7 @@ bigdecimal = { version = "0.4.9", features = ["serde"] }
 borsh = "1.5.7"
 bs58 = "0.5.1"
 chrono = "0.4.42"
+clap = { version = "4.5.50", features = ["derive"] }
 dotenv = "0.15.0"
 futures = "0.3.31"
 futures-util = "0.3.31"
