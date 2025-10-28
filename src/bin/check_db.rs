@@ -13,25 +13,23 @@ async fn main() -> Result<()> {
     
     println!("🔍 Checking database contents...\n");
     
-    // Check transactions
     let tx_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM transactions")
         .fetch_one(&pool)
         .await?;
     println!("📝 Total Transactions: {}", tx_count.0);
     
-    // Check tokens
+    
     let token_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tokens")
         .fetch_one(&pool)
         .await?;
     println!("🪙 Total Tokens: {}", token_count.0);
     
-    // Check trades
+  
     let trade_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM trades")
         .fetch_one(&pool)
         .await?;
     println!("💰 Total Trades: {}", trade_count.0);
     
-    // Check completed tokens
     let complete_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM tokens WHERE complete = true"
     )
@@ -39,7 +37,6 @@ async fn main() -> Result<()> {
     .await?;
     println!("✅ Completed Tokens: {}", complete_count.0);
     
-    // Latest token
     let latest_token = sqlx::query!(
         "SELECT mint_address, name, symbol, creator_wallet, created_at 
          FROM tokens 
@@ -58,7 +55,6 @@ async fn main() -> Result<()> {
         println!("   Created: {}", token.created_at);
     }
     
-    // Latest trade
     let latest_trade = sqlx::query!(
         "SELECT signature, token_mint, user_wallet, is_buy, sol_amount, timestamp
          FROM trades
@@ -78,7 +74,6 @@ async fn main() -> Result<()> {
         println!("   Time: {}", trade.timestamp);
     }
     
-    // Indexer stats
     let stats = sqlx::query!(
         "SELECT total_transactions, total_tokens_created, total_trades, 
                 total_volume_sol, last_processed_slot, last_updated
